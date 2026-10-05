@@ -1,0 +1,16 @@
+{
+  "name": "RMD Studio Desk",
+  "short_name": "Studio Desk",
+  "description": "Offline project manager for shot generation, films and original IP.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e131a",
+  "theme_color": "#151c25",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

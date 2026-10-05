@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RMD Studio Desk</title>
+<meta name="description" content="Offline project manager for shot generation, films and original IP. No AI, no cloud.">
+<meta name="theme-color" content="#151c25">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Studio Desk">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!--SHELL-->
+<div class="shell" id="shell">
+  <aside class="sidebar" aria-label="Main">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--fg)"/><path d="M12 22h40v26a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4z" fill="var(--bg)"/><path d="M12 14l38-6 2 8-38 6z" fill="var(--accent)"/><path d="M20 12.8l5 7.4M31 11l5 7.4M42 9.3l5 7.4" stroke="var(--fg)" stroke-width="3"/><path d="M20 32h24M20 40h16" stroke="var(--fg)" stroke-width="3.5" stroke-linecap="round"/></svg>
+      <div><div class="brand-name">Studio Desk</div><div class="brand-sub">RMD · offline</div></div>
+    </div>
+    <nav class="nav" id="side-nav"></nav>
+    <div>
+      <div class="side-label">Pinned projects</div>
+      <div class="side-projects" id="side-projects"></div>
+    </div>
+    <div class="side-foot"><button class="sync-pill" data-action="go" data-view="sync" id="side-sync"><i class="sync-dot"></i><span>This device only</span></button></div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div class="mobile-brand"><svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--fg)"/><path d="M12 22h40v26a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4z" fill="var(--bg)"/><path d="M12 14l38-6 2 8-38 6z" fill="var(--accent)"/><path d="M20 32h24M20 40h16" stroke="var(--fg)" stroke-width="3.5" stroke-linecap="round"/></svg></div>
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Search projects, tasks, shots, notes" autocomplete="off" aria-label="Search">
+      </label>
+      <div class="spacer"></div>
+      <button class="btn primary" data-action="new-menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg><span class="new-label">New</span></button>
+    </header>
+    <main class="view" id="view" tabindex="-1"></main>
+  </div>
+  <nav class="tabbar" id="tab-nav" aria-label="Main"></nav>
+</div>
+<div id="modal-root"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<!--/SHELL-->
+<script src="app.js"></script>
+</body>
+</html>

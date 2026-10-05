@@ -1,0 +1,15 @@
+{
+  "name": "rmd-studio-desk",
+  "version": "0.1.0",
+  "description": "Offline-first project manager for a film / AI-generation studio. Runs on Windows, macOS, Linux, Android and iOS. No AI, no cloud.",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node --test test/merge.test.js test/server.test.js",
+    "build:single": "node scripts/build-single-file.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

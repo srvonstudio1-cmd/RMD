@@ -129,7 +129,7 @@ jobs:
             | Mac (Intel and Apple silicon) | `StudioDesk-${{ steps.version.outputs.version }}-mac.dmg` |
             | Android phone or tablet | `StudioDesk-${{ steps.version.outputs.version }}-android.apk` |
             | Linux | `.AppImage` or `.deb` |
-            | iPhone / iPad | Open the studio PC's address in Safari, then Share → Add to Home Screen |
+            | iPhone / iPad | No file (Apple doesn't allow it). Scan the QR code on the studio PC (Sync & backup), then Share → Add to Home Screen. See docs/INSTALL.md |
 
             First time on Windows: "Windows protected your PC" → More info → Run anyway.
             First time on Mac: open the app, then System Settings → Privacy & Security → Open Anyway.

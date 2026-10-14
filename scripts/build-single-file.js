@@ -8,8 +8,11 @@ const root = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(root, 'app', f), 'utf8');
 const icon = 'data:image/svg+xml;base64,' + Buffer.from(read('icons/icon.svg')).toString('base64');
 
+const css = read('styles.css').replace(/url\("fonts\/([\w.-]+\.woff2)"\)/g, (m, f) =>
+  `url("data:font/woff2;base64,${fs.readFileSync(path.join(root, 'app', 'fonts', f)).toString('base64')}")`);
+
 const html = read('index.html')
-  .replace('<link rel="stylesheet" href="styles.css">', () => `<style>\n${read('styles.css')}\n</style>`)
+  .replace('<link rel="stylesheet" href="styles.css">', () => `<style>\n${css}\n</style>`)
   .replace('<script src="app.js"></script>', () => `<script>\n${read('app.js').replace(/<\/script/gi, '<\\/script')}\n</script>`)
   .replace(/<link rel="manifest"[^>]*>\n/, '')
   .replace(/<link rel="apple-touch-icon"[^>]*>\n/, '')

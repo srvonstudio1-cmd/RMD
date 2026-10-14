@@ -1,0 +1,137 @@
+name: Build apps
+
+# Builds the Windows, macOS, Linux and Android apps on every push.
+# Run it by hand from the Actions tab with "Publish as a release" ticked to
+# put the installers on the repository's Releases page.
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Publish as a release
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  desktop:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+          - os: macos-latest
+            target: --mac
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx electron-builder ${{ matrix.target }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+
+  android:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: node scripts/prepare-android.js
+      - run: ./gradlew assembleDebug --no-daemon
+        working-directory: android
+      - name: Name the APK
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk "out/StudioDesk-${VERSION}-android.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          if-no-files-found: error
+          path: out/*.apk
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release
+    needs: [desktop, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Studio Desk ${{ steps.version.outputs.version }}
+          prerelease: true
+          files: dist/*
+          body: |
+            Offline project manager for the studio. Pick the file for your device:
+
+            | Device | File |
+            |---|---|
+            | Windows (install) | `StudioDesk-${{ steps.version.outputs.version }}-windows-setup.exe` |
+            | Windows (no install, run from a USB stick) | `StudioDesk-${{ steps.version.outputs.version }}-windows-portable.exe` |
+            | Mac (Intel and Apple silicon) | `StudioDesk-${{ steps.version.outputs.version }}-mac.dmg` |
+            | Android phone or tablet | `StudioDesk-${{ steps.version.outputs.version }}-android.apk` |
+            | Linux | `.AppImage` or `.deb` |
+            | iPhone / iPad | Open the studio PC's address in Safari, then Share → Add to Home Screen |
+
+            First time on Windows: "Windows protected your PC" → More info → Run anyway.
+            First time on Mac: open the app, then System Settings → Privacy & Security → Open Anyway.
+            Android: allow "Install unknown apps" for your browser or Files app when asked.
+
+            Full guide: docs/INSTALL.md

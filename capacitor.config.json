@@ -1,0 +1,16 @@
+{
+  "appId": "app.rmd.studiodesk",
+  "appName": "Studio Desk",
+  "webDir": "app",
+  "android": {
+    "allowMixedContent": true
+  },
+  "ios": {
+    "contentInset": "never"
+  },
+  "plugins": {
+    "SystemBars": {
+      "initialViewportFitValueHint": "cover"
+    }
+  }
+}

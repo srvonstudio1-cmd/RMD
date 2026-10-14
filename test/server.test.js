@@ -65,6 +65,25 @@ test('two devices exchange changes and data is saved to disk', async () => {
   assert.ok(fs.readdirSync(path.join(dataDir, 'backups')).length === 1);
 });
 
+test('files upload once per content and download with the team key', async () => {
+  const body = Buffer.from('frame data for SC01_SH010');
+  const up = await fetch(BASE + '/api/files', { method: 'POST', headers: { 'x-rmd-key': 'secret' }, body });
+  assert.strictEqual(up.status, 200);
+  const { hash, size } = await up.json();
+  assert.match(hash, /^[a-f0-9]{64}$/);
+  assert.strictEqual(size, body.length);
+  const again = await (await fetch(BASE + '/api/files', { method: 'POST', headers: { 'x-rmd-key': 'secret' }, body })).json();
+  assert.strictEqual(again.hash, hash);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dataDir, 'files')), [hash]);
+  const down = await fetch(`${BASE}/api/files/${hash}?type=image/png`, { headers: { 'x-rmd-key': 'secret' } });
+  assert.strictEqual(down.status, 200);
+  assert.strictEqual(down.headers.get('content-type'), 'image/png');
+  assert.strictEqual(Buffer.from(await down.arrayBuffer()).toString(), body.toString());
+  assert.strictEqual((await fetch(`${BASE}/api/files/${hash}`)).status, 401);
+  assert.strictEqual((await fetch(`${BASE}/api/files/${'0'.repeat(64)}`, { headers: { 'x-rmd-key': 'secret' } })).status, 404);
+  assert.strictEqual((await fetch(`${BASE}/api/files/..%2f..%2fpackage.json`, { headers: { 'x-rmd-key': 'secret' } })).status, 400);
+});
+
 test('bad JSON is a 400', async () => {
   const res = await fetch(BASE + '/api/sync', { method: 'POST', headers: { 'x-rmd-key': 'secret' }, body: '{nope' });
   assert.strictEqual(res.status, 400);

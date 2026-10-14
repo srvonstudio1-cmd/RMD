@@ -4,7 +4,11 @@
 // configured (server/server.js on the studio PC), changes are exchanged with
 // it over the local network. No AI, no cloud services.
 (function () {
-  const APP_VERSION = '0.1.0';
+  const APP_VERSION = '0.2.0';
+  // Where the app is running: the desktop app exposes `studioDesktop`, the
+  // phone app (Capacitor) exposes `Capacitor`. Otherwise it is a browser.
+  const DESKTOP = window.studioDesktop || null;
+  const NATIVE = Boolean(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
   // ---------- vocabularies ----------
   const KINDS = {
@@ -45,7 +49,7 @@
   };
   const ASPECTS = ['16:9', '9:16', '1:1', '4:5', '2.39:1', '4:3'];
   const MEMBER_COLORS = ['#b85d0b', '#2b65a8', '#0f7f73', '#6a48c0', '#b8366a', '#8a5a12', '#3d7a2a', '#5a6678'];
-  const CHILD_TYPES = ['task', 'shot', 'note', 'link', 'milestone'];
+  const CHILD_TYPES = ['task', 'shot', 'note', 'link', 'milestone', 'file'];
   const DAY = 86400000;
 
   const ICONS = {
@@ -62,6 +66,15 @@
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/>',
     open: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
     download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+    upload: '<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>',
+    calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+    more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+    archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>',
+    file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+    chevronL: '<path d="M15 18l-6-6 6-6"/>',
+    chevronR: '<path d="M9 18l6-6-6-6"/>',
+    server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
   };
   const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -128,10 +141,13 @@
   // ---------- storage (IndexedDB, with in-memory fallback) ----------
   function idbOpen() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open('rmd-studio-desk', 1);
+      const req = indexedDB.open('rmd-studio-desk', 2);
       req.onupgradeneeded = () => {
-        req.result.createObjectStore('records', { keyPath: 'id' });
-        req.result.createObjectStore('meta', { keyPath: 'key' });
+        const db = req.result;
+        if (!db.objectStoreNames.contains('records')) db.createObjectStore('records', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+        // Attached files: one entry per file record, keyed by the record id.
+        if (!db.objectStoreNames.contains('blobs')) db.createObjectStore('blobs', { keyPath: 'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -181,9 +197,29 @@
       this.meta[key] = value;
       if (this.db) idbTx(this.db, 'meta', 'readwrite', (s) => s.put({ key, value })).catch(warnStorage);
     },
+    memBlobs: new Map(),
+    async putBlob(id, blob) {
+      if (!this.db) { this.memBlobs.set(id, blob); return; }
+      await idbTx(this.db, 'blobs', 'readwrite', (s) => s.put({ id, blob }));
+    },
+    async getBlob(id) {
+      if (!this.db) return this.memBlobs.get(id) || null;
+      const row = await idbTx(this.db, 'blobs', 'readonly', (s) => s.get(id)).catch(() => null);
+      return row ? row.blob : null;
+    },
+    async deleteBlob(id) {
+      this.memBlobs.delete(id);
+      if (this.db) await idbTx(this.db, 'blobs', 'readwrite', (s) => s.delete(id)).catch(() => {});
+    },
+    async blobIds() {
+      if (!this.db) return [...this.memBlobs.keys()];
+      return (await idbTx(this.db, 'blobs', 'readonly', (s) => s.getAllKeys()).catch(() => [])) || [];
+    },
     async wipe() {
       this.records.clear();
+      this.memBlobs.clear();
       if (this.db) await idbTx(this.db, 'records', 'readwrite', (s) => s.clear()).catch(warnStorage);
+      if (this.db) await idbTx(this.db, 'blobs', 'readwrite', (s) => s.clear()).catch(warnStorage);
       this.setMeta('lastSeq', 0);
       this.setMeta('sample', false);
       this.setMeta('me', null);
@@ -197,8 +233,10 @@
   }
   const get = (id) => { const r = id && Store.records.get(id); return r && !r.deleted ? r : null; };
   const live = (type) => { const out = []; for (const r of Store.records.values()) if (r.type === type && !r.deleted) out.push(r); return out; };
-  // Children whose project still exists (a project may be deleted on another device).
-  const liveIn = (type) => live(type).filter((r) => get(r.projectId));
+  // Children whose project still exists (a project may be deleted on another
+  // device) and is not archived. Used by every cross-project view.
+  const liveIn = (type) => live(type).filter((r) => { const p = get(r.projectId); return p && !p.archived; });
+  const liveProjects = () => live('project').filter((p) => !p.archived);
   const byProject = (type, pid) => live(type).filter((r) => r.projectId === pid);
   const me = () => get(Store.meta.me);
   const meName = () => (me() ? me().name : 'Someone');
@@ -243,6 +281,7 @@
       for (const r of Store.records.values()) if (CHILD_TYPES.includes(r.type) && r.projectId === id && !r.deleted) out.push(tombstone(r));
     }
     Store.put(out);
+    for (const r of out) if (r.type === 'file') Store.deleteBlob(r.id);
     afterChange();
   }
 
@@ -277,15 +316,26 @@
     kind: 'all', stage: 'active', sort: 'deadline',
     shotStatus: 'review', shotProject: 'all', projShot: 'all',
     workMember: null, search: '',
+    calMonth: null, calDay: null,
   };
 
   const NAV = [
     ['dashboard', 'Home', 'home'],
     ['projects', 'Projects', 'projects'],
+    ['calendar', 'Calendar', 'calendar'],
     ['mywork', 'My work', 'mywork'],
     ['shots', 'Shots', 'shots'],
     ['team', 'Team', 'team'],
-    ['sync', 'Sync', 'sync'],
+    ['sync', 'Sync & backup', 'sync'],
+  ];
+  // Phones get a shorter bar; Team and Sync live under "More".
+  const TABS = [
+    ['dashboard', 'Home', 'home'],
+    ['projects', 'Projects', 'projects'],
+    ['calendar', 'Calendar', 'calendar'],
+    ['mywork', 'My work', 'mywork'],
+    ['shots', 'Shots', 'shots'],
+    ['more', 'More', 'more'],
   ];
 
   function go(view, extra) {
@@ -298,7 +348,7 @@
   function navCounts() {
     const mine = Store.meta.me;
     return {
-      projects: live('project').filter((p) => !['delivered', 'hold'].includes(p.stage)).length,
+      projects: liveProjects().filter((p) => !['delivered', 'hold'].includes(p.stage)).length,
       mywork: liveIn('task').filter((t) => t.assignee === mine && t.status !== 'done').length,
       shots: liveIn('shot').filter((s) => s.status === 'review').length,
     };
@@ -307,13 +357,14 @@
   function renderNav() {
     const counts = navCounts();
     const current = ui.view === 'project' ? 'projects' : ui.view;
+    const currentTab = ['team', 'sync'].includes(current) ? 'more' : current;
     $('#side-nav').innerHTML = NAV.map(([v, label, ic]) => `
       <button class="nav-btn" data-action="go" data-view="${v}"${current === v ? ' aria-current="page"' : ''}>
         ${icon(ic)}<span>${label}</span>${counts[v] ? `<span class="nav-count">${counts[v]}</span>` : ''}
       </button>`).join('');
-    $('#tab-nav').innerHTML = NAV.map(([v, label, ic]) => `
-      <button data-action="go" data-view="${v}"${current === v ? ' aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></button>`).join('');
-    const pinned = live('project').filter((p) => p.pinned).sort((a, b) => a.name.localeCompare(b.name));
+    $('#tab-nav').innerHTML = TABS.map(([v, label, ic]) => `
+      <button data-action="go" data-view="${v}"${currentTab === v ? ' aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></button>`).join('');
+    const pinned = liveProjects().filter((p) => p.pinned).sort((a, b) => a.name.localeCompare(b.name));
     $('#side-projects').innerHTML = pinned.length
       ? pinned.map((p) => `<button class="nav-btn" data-action="open-project" data-id="${p.id}"${ui.view === 'project' && ui.projectId === p.id ? ' aria-current="page"' : ''}>
           <i class="dot" style="background:${(KINDS[p.kind] || KINDS.other).color}"></i><span class="name">${esc(p.name)}</span></button>`).join('')
@@ -325,6 +376,47 @@
     const view = VIEWS[ui.view] || VIEWS.dashboard;
     $('#view').innerHTML = view();
     updateSyncBadge();
+    if (ui.view === 'sync' && DESKTOP) renderHostPanel();
+  }
+
+  // ---------- desktop app: host the studio server on this computer ----------
+  async function renderHostPanel() {
+    const el = $('#host-panel');
+    if (!el) return;
+    let info;
+    try { info = await DESKTOP.getHostInfo(); } catch (err) { el.textContent = 'The desktop app did not answer.'; return; }
+    const addrs = (info.addresses || []).map((a) => `http://${a}:${info.port}`);
+    el.innerHTML = `
+      <div class="status-line"><i class="sync-dot ${info.running ? 'ok' : info.error ? 'err' : ''}"></i>
+        <span>${info.running ? 'Running on this computer.' : info.error ? esc(info.error) : 'Off. This computer only syncs with another studio PC.'}</span></div>
+      ${info.running ? `<div class="field"><span>Other devices connect to</span>${addrs.length ? addrs.map((a) => `<div class="addr"><span class="mono">${esc(a)}</span><button class="icon-btn" data-action="copy" data-text="${esc(a)}" aria-label="Copy address">${icon('copy')}</button></div>`).join('') : '<span class="muted">No Wi-Fi or network connection found.</span>'}</div>` : ''}
+      <label class="field"><span>Team key for the server</span><input id="host-key" type="password" autocomplete="off" placeholder="Optional. Everyone enters the same key." value="${esc(info.key || '')}"></label>
+      <div class="actions">${info.running
+        ? '<button class="btn" data-action="host-apply" data-on="1">Save key</button><button class="btn danger" data-action="host-apply" data-on="0">Stop hosting</button>'
+        : `<button class="btn primary" data-action="host-apply" data-on="1">${icon('server')}Host the studio server here</button>`}
+        <button class="btn ghost" data-action="host-open">Open data folder</button></div>
+      <p class="muted" style="font-size:.85rem">Data folder: <span class="mono">${esc(info.dataDir || '')}</span>. It holds every project, uploaded file and the daily backups. Keep this app open (it can sit minimised) while the team works.</p>`;
+  }
+
+  async function applyHosting(enabled) {
+    const keyInput = $('#host-key');
+    const key = keyInput ? keyInput.value : '';
+    let info;
+    try { info = await DESKTOP.setHosting({ enabled, key }); } catch (err) { toast('Could not change the server setting.'); return; }
+    if (enabled && info.running) {
+      Store.setMeta('serverUrl', `http://localhost:${info.port}`);
+      Store.setMeta('syncKey', key);
+      Store.setMeta('declinedAuto', false);
+      toast('Studio server is running on this computer');
+      Sync.run();
+    } else if (!enabled) {
+      if (/^http:\/\/localhost:/.test(Store.meta.serverUrl || '')) Store.setMeta('serverUrl', '');
+      Sync.state = { status: 'off', message: '', server: '' };
+      toast('Stopped hosting');
+    } else {
+      toast(info.error || 'The server could not start.');
+    }
+    render();
   }
 
   // ---------- views ----------
@@ -337,7 +429,7 @@
   }
 
   VIEWS.dashboard = function () {
-    const projects = live('project');
+    const projects = liveProjects();
     const active = projects.filter((p) => !['delivered', 'hold'].includes(p.stage));
     const tasks = liveIn('task');
     const open = tasks.filter((t) => t.status !== 'done');
@@ -413,7 +505,7 @@
     const pct = total ? Math.round(((done + approved) / total) * 100) : 0;
     const team = (p.members || []).map(memberById).filter(Boolean);
     return `<article class="card" data-action="open-project" data-id="${p.id}" tabindex="0">
-      <div class="card-top">${kindTag(p.kind)}${pill(STAGES, p.stage)}</div>
+      <div class="card-top">${kindTag(p.kind)}${p.archived ? '<span class="pill plain">Archived</span>' : pill(STAGES, p.stage)}</div>
       <h3>${p.pinned ? '<span class="pin" title="Pinned">●</span> ' : ''}${esc(p.name)}</h3>
       <div class="meta">${p.client ? `<span>${esc(p.client)}</span>` : ''}${p.deadline ? `<span>Due ${fmtDate(p.deadline)}</span>${p.stage !== 'delivered' ? countdownHtml(p.deadline) : ''}` : '<span>No deadline</span>'}</div>
       <div style="display:flex;flex-direction:column;gap:6px">
@@ -425,10 +517,10 @@
   }
 
   VIEWS.projects = function () {
-    const all = live('project');
+    const all = live('project').filter((p) => (ui.stage === 'archived' ? p.archived : !p.archived));
     let list = all.filter((p) => ui.kind === 'all' || p.kind === ui.kind);
     if (ui.stage === 'active') list = list.filter((p) => !['delivered', 'hold'].includes(p.stage));
-    else if (ui.stage !== 'all') list = list.filter((p) => p.stage === ui.stage);
+    else if (ui.stage !== 'all' && ui.stage !== 'archived') list = list.filter((p) => p.stage === ui.stage);
     const sorters = {
       deadline: (a, b) => String(a.deadline || '9999').localeCompare(String(b.deadline || '9999')),
       recent: (a, b) => b.updatedAt - a.updatedAt,
@@ -445,7 +537,8 @@
         <div class="actions">
           <select class="inline" data-change="stage-filter" aria-label="Stage filter">
             <option value="active"${ui.stage === 'active' ? ' selected' : ''}>Active</option>
-            <option value="all"${ui.stage === 'all' ? ' selected' : ''}>All stages</option>${options(STAGES, ui.stage)}</select>
+            <option value="all"${ui.stage === 'all' ? ' selected' : ''}>All stages</option>${options(STAGES, ui.stage)}
+            <option value="archived"${ui.stage === 'archived' ? ' selected' : ''}>Archived</option></select>
           <select class="inline" data-change="sort" aria-label="Sort">
             <option value="deadline"${ui.sort === 'deadline' ? ' selected' : ''}>By deadline</option>
             <option value="recent"${ui.sort === 'recent' ? ' selected' : ''}>Recently updated</option>
@@ -482,6 +575,29 @@
     </div>`;
   }
 
+  function fmtSize(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  }
+
+  function fileState(f) {
+    if (f.hash) return '';
+    if (f.origin === deviceId()) return Sync.url() ? 'Uploading to the studio PC' : 'Only on this device';
+    return `Waiting for ${f.editedBy || 'another device'} to upload`;
+  }
+
+  function fileRow(f) {
+    const st = fileState(f);
+    return `<div class="row"><div class="file-thumb">${f.thumb ? `<img src="${esc(f.thumb)}" alt="">` : icon('file')}</div>
+      <div class="grow"><div class="title">${esc(f.name)}</div>
+        <div class="sub">${fmtSize(f.size)} · ${esc(f.editedBy || '')} · ${ago(f.createdAt)}${st ? ` · <span class="due soon">${esc(st)}</span>` : ''}</div></div>
+      <button class="icon-btn" data-action="open-file" data-id="${f.id}" aria-label="Save ${esc(f.name)}">${icon('download')}</button>
+      <button class="icon-btn" data-action="delete-file" data-id="${f.id}" aria-label="Delete ${esc(f.name)}">${icon('trash')}</button></div>`;
+  }
+
   function shotChips(shots, current, action) {
     const counts = {};
     for (const s of shots) counts[s.status] = (counts[s.status] || 0) + 1;
@@ -498,7 +614,8 @@
     const links = byProject('link', p.id).sort((a, b) => String(a.label).localeCompare(String(b.label)));
     const milestones = byProject('milestone', p.id).sort((a, b) => String(a.date || '9999').localeCompare(String(b.date || '9999')));
     const team = (p.members || []).map(memberById).filter(Boolean);
-    const tabs = [['board', 'Tasks', tasks.length], ['shots', 'Shots', shots.length], ['timeline', 'Timeline', milestones.length], ['notes', 'Notes', notes.length], ['links', 'Files & links', links.length]];
+    const files = byProject('file', p.id).sort((a, b) => b.createdAt - a.createdAt);
+    const tabs = [['board', 'Tasks', tasks.length], ['shots', 'Shots', shots.length], ['timeline', 'Timeline', milestones.length], ['notes', 'Notes', notes.length], ['files', 'Files & links', files.length + links.length]];
 
     let body = '';
     if (ui.tab === 'board') {
@@ -512,7 +629,8 @@
     } else if (ui.tab === 'shots') {
       const filtered = ui.projShot === 'all' ? shots : shots.filter((s) => s.status === ui.projShot);
       body = `<div class="toolbar"><div class="chips">${shotChips(shots, ui.projShot, 'proj-shot-filter')}</div>
-        <div class="actions"><button class="btn" data-action="export-csv" data-scope="${p.id}">${icon('download')}Shot list CSV</button>
+        <div class="actions"><label class="btn">${icon('upload')}Import CSV<input type="file" accept=".csv,text/csv,text/plain" hidden data-change="import-csv" id="import-csv"></label>
+        <button class="btn" data-action="export-csv" data-scope="${p.id}">${icon('download')}Shot list CSV</button>
         <button class="btn primary" data-action="new-shot">${icon('plus')}Add shot</button></div></div>
         ${filtered.length ? `<div class="shots">${filtered.map((s) => shotRow(s)).join('')}</div>` : `<div class="panel empty"><p>No shots here yet.</p><button class="btn primary" data-action="new-shot">${icon('plus')}Add shot</button></div>`}`;
     } else if (ui.tab === 'timeline') {
@@ -532,9 +650,12 @@
         <button class="btn primary" data-action="new-note">${icon('plus')}Add note</button></div>
         ${notes.length ? `<div class="notes">${notes.map((n) => `<article class="note" data-action="edit-note" data-id="${n.id}" tabindex="0"><h3>${esc(n.title || 'Untitled')}</h3><p>${esc(n.body)}</p><span class="sub">${esc(n.editedBy || '')} · ${ago(n.updatedAt)}</span></article>`).join('')}</div>` : '<div class="panel empty">No notes yet.</div>'}`;
     } else {
-      body = `<div class="toolbar"><p class="muted">Where the files live: drive links, NAS folders, local paths, review links.</p>
-        <button class="btn primary" data-action="new-link">${icon('plus')}Add link</button></div>
-        <section class="panel"><div class="panel-body" style="padding-top:8px"><div class="list">${links.map((l) => {
+      body = `<div class="toolbar"><p class="muted">Attach files to share them through the studio PC, or save links to where big footage lives.</p>
+        <div class="actions"><button class="btn" data-action="new-link">${icon('plus')}Add link</button>
+        <label class="btn primary">${icon('upload')}Add files<input type="file" multiple hidden data-change="add-files" id="add-files"></label></div></div>
+        <section class="panel"><div class="panel-head"><h2>Files</h2><span class="muted num">${files.length}</span></div>
+          <div class="panel-body"><div class="list">${files.map(fileRow).join('') || '<div class="empty">No files yet. Briefs, references, scripts and approved frames go well here.</div>'}</div></div></section>
+        <section class="panel"><div class="panel-head"><h2>Links and folders</h2><span class="muted num">${links.length}</span></div><div class="panel-body"><div class="list">${links.map((l) => {
           const isUrl = /^https?:\/\//i.test(l.target || '');
           return `<div class="row"><div class="grow"><div class="title">${esc(l.label)}</div><div class="sub mono">${esc(l.target)}</div>${l.note ? `<div class="sub">${esc(l.note)}</div>` : ''}</div>
             ${isUrl ? `<a class="icon-btn" href="${esc(l.target)}" target="_blank" rel="noopener" aria-label="Open link">${icon('open')}</a>` : ''}
@@ -544,6 +665,7 @@
     }
 
     return `
+      ${p.archived ? '<div class="sample-note"><span><b>This project is archived.</b> It is hidden from Home, Calendar, My work and Shots. Restore it to bring it back.</span></div>' : ''}
       <div class="proj-head">
         <div><button class="back" data-action="go" data-view="projects">${icon('back')}All projects</button></div>
         <div class="page-head"><div style="min-width:0">
@@ -554,6 +676,7 @@
         <div class="actions">
           <select class="inline" data-change="project-stage" data-id="${p.id}" aria-label="Stage">${options(STAGES, p.stage)}</select>
           <button class="btn" data-action="toggle-pin" data-id="${p.id}">${icon('pin')}${p.pinned ? 'Unpin' : 'Pin'}</button>
+          <button class="btn" data-action="toggle-archive" data-id="${p.id}">${icon('archive')}${p.archived ? 'Restore' : 'Archive'}</button>
           <button class="btn" data-action="edit-project" data-id="${p.id}">${icon('edit')}Edit</button>
         </div></div>
         <div class="proj-meta">
@@ -605,7 +728,7 @@
   };
 
   VIEWS.shots = function () {
-    const projects = live('project').filter((p) => byProject('shot', p.id).length).sort((a, b) => a.name.localeCompare(b.name));
+    const projects = liveProjects().filter((p) => byProject('shot', p.id).length).sort((a, b) => a.name.localeCompare(b.name));
     let shots = liveIn('shot');
     if (ui.shotProject !== 'all') shots = shots.filter((s) => s.projectId === ui.shotProject);
     const filtered = (ui.shotStatus === 'all' ? shots : shots.filter((s) => s.status === ui.shotStatus))
@@ -661,15 +784,20 @@
           <label class="check"><input type="checkbox" data-change="auto-sync"${Store.meta.autoSync !== false ? ' checked' : ''}> Sync automatically every 20 seconds</label>
           <div class="actions"><button class="btn primary" data-action="sync-save">${icon('sync')}Save and sync now</button>${url ? '<button class="btn" data-action="sync-disconnect">Disconnect</button>' : ''}</div>
           <ol class="steps"><li>On the studio PC, double-click <b>start-windows.bat</b> or <b>start-mac.command</b>.</li>
+            <li>Or, in the desktop app on that PC, turn on <b>Host the studio server here</b>.</li>
             <li>Connect phones and laptops to the same Wi-Fi.</li><li>Enter the address it shows here, on every device.</li></ol>
         </div></section>
+        ${DESKTOP ? `<section class="panel"><div class="panel-head"><h2>Studio server on this computer</h2></div><div class="panel-body">
+          <p class="muted">Turn this on for the one computer that stays on in the studio. Phones and other computers then connect to it. No other software needed.</p>
+          <div id="host-panel" style="display:flex;flex-direction:column;gap:14px">Checking…</div></div></section>` : ''}
         <section class="panel"><div class="panel-head"><h2>Backup</h2></div><div class="panel-body">
           <p class="muted">Download everything as one file. Keep it on a drive, or move it to a device with no network. Importing merges by newest change, nothing is overwritten blindly.</p>
           <div class="actions"><button class="btn" data-action="export-backup">${icon('download')}Download backup</button>
             <button class="btn" data-action="import-backup">Import backup</button>
             <button class="btn" data-action="export-csv" data-scope="all">All shots CSV</button></div>
           <input type="file" id="import-file" accept="application/json,.json" data-change="import-file" hidden>
-          <p class="muted" style="font-size:.85rem">The studio PC also keeps a dated copy every day in its <span class="mono">data/backups</span> folder.</p>
+          <p class="muted" style="font-size:.85rem">The studio PC also keeps a dated copy every day in its <span class="mono">backups</span> folder. Attached files are not inside the backup file; they stay in the studio PC's <span class="mono">files</span> folder.</p>
+          <div class="actions"><button class="btn ghost" data-action="clear-downloads">Free up space: remove downloaded files</button></div>
         </div></section>
         <section class="panel"><div class="panel-head"><h2>This device</h2></div><div class="panel-body">
           <label class="field"><span>Appearance</span><select data-change="theme" id="theme-select">
@@ -682,6 +810,79 @@
       </div>`;
   };
 
+  // Everything with a date, for the calendar: open tasks, milestones, deadlines.
+  function datedItems() {
+    const items = [];
+    for (const t of liveIn('task')) if (t.due && t.status !== 'done') items.push({ date: t.due, kind: 'task', rec: t, project: get(t.projectId) });
+    for (const m of liveIn('milestone')) if (m.date) items.push({ date: m.date, kind: 'milestone', rec: m, project: get(m.projectId) });
+    for (const p of liveProjects()) if (p.deadline && p.stage !== 'delivered') items.push({ date: p.deadline, kind: 'deadline', rec: p, project: p });
+    return items;
+  }
+
+  function calItemHtml(it, compact) {
+    const color = (KINDS[it.project.kind] || KINDS.other).color;
+    const label = it.kind === 'deadline' ? `Delivery: ${it.project.name}` : it.kind === 'milestone' ? `◆ ${it.rec.title}` : it.rec.title;
+    const action = it.kind === 'task' ? `data-action="edit-task" data-id="${it.rec.id}"`
+      : it.kind === 'milestone' ? `data-action="edit-milestone" data-id="${it.rec.id}"` : `data-action="open-project" data-id="${it.project.id}"`;
+    if (compact) return `<button class="cal-item${it.kind === 'deadline' ? ' deadline' : ''}${it.rec.done ? ' done' : ''}" style="border-left-color:${color}" ${action} title="${esc(label)}">${esc(label)}</button>`;
+    const who = it.kind === 'task' ? avatar(memberById(it.rec.assignee), 22) : '';
+    return `<div class="row link" ${action} tabindex="0"><i class="dot" style="background:${color}"></i>
+      <div class="grow"><div class="title">${esc(label)}</div><div class="sub">${esc(it.project.name)}${it.kind === 'task' ? ` · ${TASK_STATUS[it.rec.status].label}` : ''}</div></div>${who}</div>`;
+  }
+
+  VIEWS.calendar = function () {
+    const today = isoDay(new Date());
+    if (!ui.calMonth) ui.calMonth = today.slice(0, 7);
+    if (!ui.calDay) ui.calDay = today;
+    const [y, m] = ui.calMonth.split('-').map(Number);
+    const first = new Date(y, m - 1, 1);
+    const start = new Date(first);
+    start.setDate(1 - ((first.getDay() + 6) % 7)); // weeks start on Monday
+    const byDate = {};
+    for (const it of datedItems()) (byDate[it.date] = byDate[it.date] || []).push(it);
+    const order = { deadline: 0, milestone: 1, task: 2 };
+    for (const k of Object.keys(byDate)) byDate[k].sort((a, b) => order[a.kind] - order[b.kind]);
+    const cells = [];
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      if (i === 35 && d.getMonth() !== m - 1) break;
+      const key = isoDay(d);
+      const list = byDate[key] || [];
+      const cls = ['cal-day', d.getMonth() !== m - 1 ? 'out' : '', key === today ? 'today' : '', key === ui.calDay ? 'sel' : ''].join(' ');
+      cells.push(`<div class="${cls}" data-action="cal-day" data-day="${key}" tabindex="0" aria-label="${d.toLocaleDateString(undefined, { day: 'numeric', month: 'long' })}, ${plural(list.length, 'item')}">
+        <span class="cal-num num">${d.getDate()}</span>
+        <div class="cal-items">${list.slice(0, 3).map((it) => calItemHtml(it, true)).join('')}${list.length > 3 ? `<span class="cal-more">+${list.length - 3} more</span>` : ''}</div>
+        <div class="cal-dots">${list.slice(0, 4).map((it) => `<i style="background:${(KINDS[it.project.kind] || KINDS.other).color}"></i>`).join('')}</div>
+      </div>`);
+    }
+    const dayList = byDate[ui.calDay] || [];
+    const monthName = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const dayName = parseDay(ui.calDay).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    const weekdays = [];
+    for (let i = 0; i < 7; i++) { const d = new Date(2024, 0, 1 + i); weekdays.push(d.toLocaleDateString(undefined, { weekday: 'short' })); }
+    return `
+      <div class="page-head"><div><h1>Calendar</h1><p class="lede">Due tasks, milestones and delivery dates across every active project.</p></div>
+        <div class="actions"><button class="icon-btn" data-action="cal-move" data-d="-1" aria-label="Previous month">${icon('chevronL')}</button>
+          <button class="btn" data-action="cal-today">Today</button>
+          <button class="icon-btn" data-action="cal-move" data-d="1" aria-label="Next month">${icon('chevronR')}</button></div></div>
+      <section class="panel cal"><div class="panel-head"><h2>${esc(monthName)}</h2></div>
+        <div class="cal-grid">${weekdays.map((w) => `<div class="cal-wd">${esc(w)}</div>`).join('')}${cells.join('')}</div></section>
+      <section class="panel"><div class="panel-head"><h2>${esc(dayName)}</h2>
+        <button class="btn sm" data-action="new-task" data-due="${ui.calDay}">${icon('plus')}Task on this day</button></div>
+        <div class="panel-body"><div class="list">${dayList.map((it) => calItemHtml(it, false)).join('') || '<div class="empty">Nothing on this day.</div>'}</div></div></section>`;
+  };
+
+  VIEWS.more = function () {
+    const link = (view, ic, title, sub) => `<div class="row link" data-action="go" data-view="${view}" tabindex="0"><span class="more-ic">${icon(ic)}</span>
+      <div class="grow"><div class="title">${title}</div><div class="sub">${sub}</div></div>${icon('chevronR').replace('<svg', '<svg width="18" height="18"')}</div>`;
+    return `<div class="page-head"><div><h1>More</h1></div></div>
+      <section class="panel"><div class="panel-body" style="padding-top:8px"><div class="list">
+        ${link('team', 'team', 'Team', 'People, roles, and who uses this device')}
+        ${link('sync', 'sync', 'Sync & backup', 'Studio PC connection, backups, appearance')}
+      </div></div></section>`;
+  };
+
   VIEWS.search = function () {
     const q = ui.search.trim().toLowerCase();
     const hit = (...vals) => vals.some((v) => v && String(v).toLowerCase().includes(q));
@@ -690,16 +891,18 @@
     const shots = liveIn('shot').filter((s) => hit(s.code, s.description, s.prompt, s.notes, s.tool, s.scene)).sort(byCode);
     const notes = liveIn('note').filter((n) => hit(n.title, n.body));
     const links = liveIn('link').filter((l) => hit(l.label, l.target, l.note));
+    const files = liveIn('file').filter((f) => hit(f.name));
     const row = (action, id, title, sub, extra = '') => `<div class="row link" data-action="${action}" data-id="${id}" tabindex="0"><div class="grow"><div class="title">${esc(title)}</div><div class="sub">${esc(sub)}</div></div>${extra}</div>`;
     const pname = (r) => get(r.projectId).name;
     const group = (title, list, fn) => list.length ? `<section class="panel"><div class="panel-head"><h2>${title}</h2><span class="muted num">${list.length}</span></div><div class="panel-body"><div class="list">${list.slice(0, 30).map(fn).join('')}</div></div></section>` : '';
-    const total = projects.length + tasks.length + shots.length + notes.length + links.length;
+    const total = projects.length + tasks.length + shots.length + notes.length + links.length + files.length;
     return `<div class="page-head"><div><h1>Search</h1><p class="lede">${plural(total, 'result')} for “${esc(ui.search)}”</p></div></div>
       ${group('Projects', projects, (p) => row('open-project', p.id, p.name, `${(KINDS[p.kind] || KINDS.other).label} · ${STAGES[p.stage] ? STAGES[p.stage].label : ''}`))}
       ${group('Tasks', tasks, (t) => row('edit-task', t.id, t.title, `${pname(t)} · ${TASK_STATUS[t.status].label}`, dueHtml(t.due, t.status === 'done')))}
       ${group('Shots', shots, (s) => row('edit-shot', s.id, `${s.code} — ${s.description || ''}`, pname(s), pill(SHOT_STATUS, s.status)))}
       ${group('Notes', notes, (n) => row('edit-note', n.id, n.title || 'Untitled', pname(n)))}
-      ${group('Files & links', links, (l) => row('edit-link', l.id, l.label, `${pname(l)} · ${l.target}`))}
+      ${group('Files', files, (f) => row('open-file', f.id, f.name, `${pname(f)} · ${fmtSize(f.size)}`))}
+      ${group('Links', links, (l) => row('edit-link', l.id, l.label, `${pname(l)} · ${l.target}`))}
       ${total ? '' : '<div class="panel empty">Nothing found. Try a shot code, a client or a word from a note.</div>'}`;
   };
 
@@ -812,14 +1015,53 @@
     });
   }
 
-  const projectOptions = () => live('project').sort((a, b) => a.name.localeCompare(b.name)).map((p) => [p.id, p.name]);
+  const projectOptions = () => liveProjects().sort((a, b) => a.name.localeCompare(b.name)).map((p) => [p.id, p.name]);
   const memberOptions = () => [['', 'Unassigned'], ...members().map((m) => [m.id, m.name])];
   const mapOptions = (map) => Object.entries(map).map(([k, v]) => [k, v.label]);
   const contextProject = () => (ui.view === 'project' ? ui.projectId : null);
 
   function needProject(fn) {
-    if (!live('project').length) { toast('Create a project first.'); editProject(); return; }
+    if (!liveProjects().length) { toast('Create a project first.'); editProject(); return; }
     fn();
+  }
+
+  // Starter tasks and milestones for a new project. The number is how far
+  // along the way to the deadline the item is due (0 = today, 1 = deadline).
+  const TEMPLATES = {
+    shot: {
+      label: 'Shot generation batch',
+      tasks: [['Brief and moodboard', 0.05], ['Style frames for client sign-off', 0.12], ['Build the shot list', 0.2], ['Generate first pass of all shots', 0.45], ['Send round 1 to client', 0.53], ['Redo and polish flagged shots', 0.7], ['Send round 2 to client', 0.78], ['Upscale and finish approved shots', 0.9], ['Deliver final files', 1], ['Send invoice', null]],
+      milestones: [['Moodboard locked', 0.15], ['Client review round 1', 0.55], ['Client review round 2', 0.8]],
+    },
+    film: {
+      label: 'Feature or short film',
+      tasks: [['Final draft of the script', 0.08], ['Breakdown and budget', 0.15], ['Casting', 0.25], ['Location recce', 0.25], ['Previs and storyboards', 0.3], ['Shoot schedule', 0.35], ['Edit: assembly cut', 0.6], ['Edit: fine cut', 0.72], ['Sound and music', 0.85], ['Colour grade', 0.9], ['Final delivery and masters', 1]],
+      milestones: [['Script lock', 0.1], ['Shoot starts', 0.4], ['Picture lock', 0.75]],
+    },
+    ip: {
+      label: 'Original IP / series',
+      tasks: [['Logline and synopsis', 0.1], ['Write the world bible', 0.28], ['Character sheets for leads', 0.4], ['Pilot script', 0.6], ['Look development frames', 0.7], ['Pitch deck', 0.85], ['Register title and trademark', null]],
+      milestones: [['World bible v1', 0.3], ['Pitch ready', 1]],
+    },
+    ad: {
+      label: 'Ad / brand film',
+      tasks: [['Brief and script', 0.1], ['Storyboard', 0.2], ['Production or generation', 0.5], ['Offline edit', 0.65], ['Send cut to client', 0.72], ['Online, grade and sound', 0.9], ['Deliver all cut-downs', 1], ['Send invoice and usage licence', null]],
+      milestones: [['Storyboard approved', 0.25], ['Client review', 0.75]],
+    },
+    music: {
+      label: 'Music video',
+      tasks: [['Treatment', 0.1], ['Shot list', 0.2], ['Shoot or generate', 0.4], ['Edit', 0.65], ['Colour pass', 0.8], ['Lyric subtitles', 0.85], ['Final export and vertical cut', 1], ['Send invoice', null]],
+      milestones: [['Footage complete', 0.45], ['Picture lock', 0.7]],
+    },
+  };
+
+  function applyTemplate(projectId, key, deadline) {
+    const t = TEMPLATES[key];
+    if (!t) return;
+    const span = deadline ? Math.max(1, daysUntil(deadline)) : null;
+    const when = (f) => (span == null || f == null ? '' : addDays(Math.round(span * f)));
+    for (const [title, f] of t.tasks) save('task', { projectId, title, status: 'todo', priority: f === 1 ? 'high' : 'normal', due: when(f), assignee: '' }, { quiet: true });
+    for (const [title, f] of t.milestones) save('milestone', { projectId, title, date: when(f), done: false }, { quiet: true });
   }
 
   function editProject(p) {
@@ -836,9 +1078,14 @@
         { name: 'tags', label: 'Tags', wide: true, placeholder: 'e.g. 9:16, 4K, Hindi' },
         { name: 'members', label: 'Team on this project', type: 'members', wide: true },
         { name: 'pinned', label: 'Pin to sidebar', type: 'checkbox', wide: true },
+        ...(p ? [] : [{ name: 'template', label: 'Starter tasks', type: 'select', wide: true, default: 'auto',
+          options: [['auto', 'Typical tasks for this project type'], ['', 'None, start empty'], ...Object.entries(TEMPLATES).map(([k, t]) => [k, t.label])],
+          hint: 'Adds typical tasks and milestones, spread out up to the deadline.' }]),
       ],
       onSave: (v) => {
-        const rec = save('project', { ...(p ? { id: p.id } : {}), ...v }, { quiet: true });
+        const { template, ...data } = v;
+        const rec = save('project', { ...(p ? { id: p.id } : {}), ...data }, { quiet: true });
+        if (!p && template) applyTemplate(rec.id, template === 'auto' ? data.kind : template, data.deadline);
         if (!p) go('project', { projectId: rec.id, tab: 'board' }); else afterChange();
         toast(p ? 'Project saved' : 'Project created');
       },
@@ -854,7 +1101,7 @@
       const pid = (t && t.projectId) || preset.projectId || contextProject();
       formModal({
         title: t ? 'Edit task' : 'New task',
-        values: t || { status: preset.status || 'todo', priority: 'normal', projectId: pid || projectOptions()[0][0], assignee: Store.meta.me || '' },
+        values: t || { status: preset.status || 'todo', priority: 'normal', projectId: pid || projectOptions()[0][0], assignee: Store.meta.me || '', due: preset.due || '' },
         fields: [
           ...(pid && !t ? [] : [{ name: 'projectId', label: 'Project', type: 'select', options: projectOptions(), wide: true }]),
           { name: 'title', label: 'Task', required: true, wide: true, placeholder: 'e.g. Client review round 1' },
@@ -980,14 +1227,179 @@
   }
 
   // ---------- export / import ----------
-  function download(name, text, type) {
-    const blob = new Blob([text], { type });
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onerror = reject;
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.readAsDataURL(blob);
+    });
+  }
+
+  // Hands a file to the person: a normal download in browsers and the desktop
+  // app, the share sheet (Save to Files, Drive, WhatsApp…) in the phone app.
+  async function saveFile(name, data, type) {
+    const blob = data instanceof Blob ? data : new Blob([data], { type });
+    const plugins = NATIVE && window.Capacitor.Plugins;
+    if (plugins && plugins.Filesystem && plugins.Share) {
+      try {
+        const written = await plugins.Filesystem.writeFile({ path: name.replace(/[\\/:*?"<>|]+/g, '-'), data: await blobToBase64(blob), directory: 'CACHE' });
+        await plugins.Share.share({ title: name, files: [written.uri] });
+      } catch (err) {
+        if (!/cancel/i.test(String(err && (err.message || err)))) toast('Could not open the share sheet on this phone.');
+      }
+      return;
+    }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
     document.body.appendChild(a);
     a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
+  }
+  const download = (name, text, type) => saveFile(name, text, type);
+
+  // ---------- attached files ----------
+  async function addFiles(fileList, projectId) {
+    const list = [...(fileList || [])];
+    let added = 0;
+    for (const f of list) {
+      const id = uid();
+      try {
+        await Store.putBlob(id, f);
+      } catch (err) {
+        toast(`${f.name} is too big to keep on this device.`);
+        continue;
+      }
+      const thumb = /^image\//.test(f.type) && f.size < 40 * 1024 * 1024 ? await shrinkImage(f, 160).catch(() => '') : '';
+      save('file', { id, projectId, name: f.name, size: f.size, mime: f.type || 'application/octet-stream', hash: '', origin: deviceId(), thumb }, { quiet: true });
+      added++;
+    }
+    afterChange();
+    if (added) toast(Sync.url() ? `${plural(added, 'file')} added. Uploading to the studio PC.` : `${plural(added, 'file')} added to this device`);
+  }
+
+  async function openFile(id) {
+    const f = get(id);
+    if (!f) return;
+    let blob = await Store.getBlob(id);
+    if (!blob && f.hash && Sync.url()) {
+      toast('Downloading from the studio PC…');
+      try {
+        const res = await fetch(`${Sync.url()}/api/files/${f.hash}?type=${encodeURIComponent(f.mime || '')}`, { headers: { 'X-RMD-Key': Store.meta.syncKey || '' } });
+        if (!res.ok) throw new Error(res.status === 401 ? 'The team key does not match the studio PC.' : 'The studio PC does not have this file.');
+        blob = await res.blob();
+        await Store.putBlob(id, blob).catch(() => {});
+      } catch (err) {
+        toast(err instanceof TypeError ? 'Cannot reach the studio PC. Check that it is on and on the same Wi-Fi.' : err.message);
+        return;
+      }
+    }
+    if (!blob) {
+      toast(f.hash ? 'Connect to the studio PC to download this file.' : `${fileState(f)}.`);
+      return;
+    }
+    saveFile(f.name, blob, f.mime);
+  }
+
+  async function clearDownloads() {
+    let n = 0;
+    for (const id of await Store.blobIds()) {
+      const f = Store.records.get(id);
+      // Keep files that have not reached the studio PC yet.
+      if (f && !f.deleted && !f.hash) continue;
+      await Store.deleteBlob(id);
+      n++;
+    }
+    toast(n ? `Removed ${plural(n, 'downloaded file')} from this device` : 'No downloaded files to remove');
+  }
+
+  // ---------- shot list CSV import ----------
+  function parseCsv(text) {
+    const src = text.replace(/^\ufeff/, '');
+    const firstLine = src.split(/\r?\n/, 1)[0];
+    const delim = [',', ';', '\t'].sort((a, b) => firstLine.split(b).length - firstLine.split(a).length)[0];
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let quoted = false;
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (quoted) {
+        if (c === '"' && src[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') quoted = false; else cell += c;
+      } else if (c === '"') quoted = true;
+      else if (c === delim) { row.push(cell); cell = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && src[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += c;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows.filter((r) => r.some((c) => c.trim() !== ''));
+  }
+
+  const CSV_COLUMNS = {
+    code: ['shot', 'code', 'shot code', 'shot id', 'shot no', 'shot number'],
+    scene: ['scene', 'sequence', 'sc'],
+    status: ['status', 'state'],
+    takes: ['takes', 'take', 'attempts'],
+    tool: ['made with', 'tool', 'model', 'generator', 'engine', 'camera'],
+    duration: ['seconds', 'duration', 'length', 'sec', 'secs', 'duration (s)'],
+    aspect: ['aspect', 'aspect ratio', 'ratio', 'format'],
+    description: ['description', 'what happens', 'action', 'shot description', 'desc'],
+    prompt: ['prompt / notes', 'prompt', 'prompt or camera notes', 'camera notes'],
+    notes: ['review notes', 'notes', 'feedback', 'comments'],
+    assignee: ['assigned to', 'assignee', 'owner', 'artist'],
+  };
+
+  async function importCsv(file, projectId) {
+    const rows = parseCsv(await file.text());
+    if (rows.length < 2) { toast('That CSV has no shot rows.'); return; }
+    const head = rows[0].map((h) => h.trim().toLowerCase());
+    const col = {};
+    for (const [field, names] of Object.entries(CSV_COLUMNS)) {
+      const i = head.findIndex((h) => names.includes(h));
+      if (i >= 0) col[field] = i;
+    }
+    if (col.code == null && col.description == null) { toast('Could not find a "Shot" or "Description" column in that CSV.'); return; }
+    const existing = new Map(byProject('shot', projectId).map((sh) => [String(sh.code).toLowerCase(), sh]));
+    const statusOf = (v) => {
+      const t = String(v || '').trim().toLowerCase();
+      if (!t) return null;
+      return Object.keys(SHOT_STATUS).find((k) => k === t || SHOT_STATUS[k].label.toLowerCase() === t)
+        || (t.includes('review') ? 'review' : t === 'done' ? 'final' : null);
+    };
+    const memberOf = (v) => {
+      const t = String(v || '').trim().toLowerCase();
+      const m = t && members().find((x) => x.name.toLowerCase() === t || x.name.toLowerCase().split(/\s+/)[0] === t);
+      return m ? m.id : null;
+    };
+    let added = 0;
+    let updated = 0;
+    for (const r of rows.slice(1)) {
+      const val = (f) => (col[f] == null ? '' : String(r[col[f]] == null ? '' : r[col[f]]).trim());
+      const code = val('code') || nextShotCode(projectId);
+      const data = { code };
+      for (const f of ['scene', 'tool', 'aspect', 'description', 'prompt', 'notes']) if (val(f)) data[f] = val(f);
+      const st = statusOf(val('status'));
+      if (st) data.status = st;
+      const takes = parseInt(val('takes'), 10);
+      if (!Number.isNaN(takes)) data.takes = takes;
+      const secs = parseFloat(val('duration'));
+      if (!Number.isNaN(secs)) data.duration = secs;
+      const who = memberOf(val('assignee'));
+      if (who) data.assignee = who;
+      const prev = existing.get(code.toLowerCase());
+      if (prev) {
+        save('shot', { id: prev.id, ...data }, { quiet: true });
+        updated++;
+      } else {
+        existing.set(code.toLowerCase(), save('shot', { projectId, status: 'planned', takes: 0, aspect: '16:9', ...data }, { quiet: true }));
+        added++;
+      }
+    }
+    afterChange();
+    toast(`${plural(added, 'shot')} added${updated ? `, ${updated} updated` : ''}`);
   }
 
   function exportBackup() {
@@ -1077,9 +1489,12 @@
         Store.put(incoming);
         Store.setMeta('lastSeq', data.seq || 0);
         Store.setMeta('lastSyncAt', Date.now());
+        clearTimeout(timeout);
+        const uploaded = await this.uploadFiles(url);
         this.state.status = 'ok';
         this.state.message = '';
-        if (incoming.length) render();
+        if (incoming.length || uploaded) render();
+        if (uploaded) this.schedule();
       } catch (err) {
         this.state.status = 'err';
         this.state.message = err.name === 'AbortError' || err instanceof TypeError
@@ -1091,6 +1506,25 @@
         updateSyncBadge();
         if (ui.view === 'sync' && !document.querySelector('#view input:focus')) render();
       }
+    },
+    // Sends files added on this device to the studio PC, one at a time.
+    async uploadFiles(url) {
+      let count = 0;
+      const pending = live('file').filter((f) => !f.hash && f.origin === deviceId() && get(f.projectId));
+      for (const f of pending) {
+        const blob = await Store.getBlob(f.id);
+        if (!blob) continue;
+        const res = await fetch(url + '/api/files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream', 'X-RMD-Key': Store.meta.syncKey || '' },
+          body: blob,
+        });
+        if (!res.ok) throw new Error(res.status === 413 ? `${f.name} is larger than 2 GB and cannot be uploaded.` : `Uploading ${f.name} failed (${res.status}).`);
+        const { hash } = await res.json();
+        save('file', { id: f.id, hash }, { quiet: true });
+        count++;
+      }
+      return count;
     },
     async ping(url) {
       const res = await fetch(url.replace(/\/+$/, '') + '/api/ping', { cache: 'no-store' });
@@ -1151,7 +1585,7 @@
     'member-work': (el) => go('mywork', { workMember: el.dataset.id }),
     'new-menu': newMenu,
     'new-project': () => editProject(),
-    'new-task': (el) => editTask(null, { status: el.dataset.status }),
+    'new-task': (el) => editTask(null, { status: el.dataset.status, due: el.dataset.due }),
     'new-shot': () => editShot(),
     'new-note': () => editNote(),
     'new-link': () => editLink(),
@@ -1164,6 +1598,28 @@
     'edit-link': (el) => editLink(get(el.dataset.id)),
     'edit-milestone': (el) => editMilestone(get(el.dataset.id)),
     'edit-member': (el) => editMember(get(el.dataset.id)),
+    'toggle-archive': (el) => {
+      const p = get(el.dataset.id);
+      save('project', { id: p.id, archived: !p.archived });
+      toast(p.archived ? 'Project restored' : 'Project archived');
+    },
+    'cal-day': (el, e) => { if (e.target.closest('.cal-item')) return; ui.calDay = el.dataset.day; render(); },
+    'cal-move': (el) => {
+      const [y, m] = ui.calMonth.split('-').map(Number);
+      const d = new Date(y, m - 1 + Number(el.dataset.d), 1);
+      ui.calMonth = isoDay(d).slice(0, 7);
+      ui.calDay = isoDay(d);
+      render();
+    },
+    'cal-today': () => { ui.calMonth = null; ui.calDay = null; render(); },
+    'open-file': (el) => openFile(el.dataset.id),
+    'delete-file': (el) => {
+      const f = get(el.dataset.id);
+      confirmModal(`Delete ${f.name} from this project?`, 'Delete', () => { remove(f.id); toast('File deleted'); });
+    },
+    'clear-downloads': () => clearDownloads(),
+    'host-apply': (el) => applyHosting(el.dataset.on === '1'),
+    'host-open': () => DESKTOP && DESKTOP.openDataFolder(),
     'toggle-pin': (el) => { const p = get(el.dataset.id); save('project', { id: p.id, pinned: !p.pinned }); toast(p.pinned ? 'Unpinned' : 'Pinned to sidebar'); },
     take: (el) => { const s = get(el.dataset.id); save('shot', { id: s.id, takes: Math.max(0, (Number(s.takes) || 0) + Number(el.dataset.d)) }); },
     copy: (el) => {
@@ -1217,6 +1673,8 @@
     me: (el) => { Store.setMeta('me', el.value || null); render(); toast(el.value ? `This device now edits as ${get(el.value).name}` : 'No person chosen'); },
     'auto-sync': (el) => { Store.setMeta('autoSync', el.checked); },
     theme: (el) => { Store.setMeta('theme', el.value); applyTheme(); },
+    'add-files': (el) => { if (el.files && el.files.length) addFiles(el.files, ui.projectId); el.value = ''; },
+    'import-csv': (el) => { if (el.files && el.files[0]) importCsv(el.files[0], ui.projectId).catch(() => toast('That file could not be read as CSV.')); el.value = ''; },
     'import-file': (el) => { if (el.files && el.files[0]) importBackup(el.files[0]); el.value = ''; },
   };
 
@@ -1383,7 +1841,14 @@
     bindEvents();
     render();
     // When the app is opened from the studio PC itself, connect to it automatically.
-    if (!Store.meta.serverUrl && /^https?:$/.test(location.protocol) && !Store.meta.declinedAuto) {
+    // The desktop app that hosts the studio server syncs with itself.
+    if (DESKTOP && !Store.meta.serverUrl) {
+      try {
+        const info = await DESKTOP.getHostInfo();
+        if (info.running) Store.setMeta('serverUrl', `http://localhost:${info.port}`);
+      } catch (err) { /* older desktop shell */ }
+    }
+    if (!NATIVE && !DESKTOP && !Store.meta.serverUrl && /^https?:$/.test(location.protocol) && !Store.meta.declinedAuto) {
       try {
         const info = await Sync.ping(location.origin);
         Store.setMeta('serverUrl', location.origin);
@@ -1396,7 +1861,7 @@
       } catch (err) { /* not served by a studio PC */ }
     }
     if (Sync.url()) Sync.run();
-    if ('serviceWorker' in navigator && window.isSecureContext && /^https?:$/.test(location.protocol)) {
+    if (!NATIVE && 'serviceWorker' in navigator && window.isSecureContext && /^https?:$/.test(location.protocol)) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
   }

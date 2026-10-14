@@ -2,7 +2,7 @@
 
 One app to run every project the studio has going: AI shot-generation batches, films, your own IP, ads and music videos. It works on Windows, macOS, Android and iOS. It runs **offline**, uses **no AI**, and keeps your data **on your own devices**.
 
-This document covers what the app is, what it does, how the team will use it day to day, and what gets built in which phase. Phase 1 (the working sample) is already in this repository.
+This document covers what the app is, what it does, how the team will use it day to day, and what gets built in which phase. Phases 1 and 2 are built and in this repository. To install: [INSTALL.md](INSTALL.md).
 
 ---
 
@@ -50,7 +50,7 @@ This document covers what the app is, what it does, how the team will use it day
 
 ## 3. Features
 
-✅ = in the Phase 1 sample (this repo) · 🔜 = planned for a later phase
+✅ = built · 🔜 = planned for a later phase
 
 ### 3.1 Projects
 - ✅ Project types: **Shot generation, Film, Own IP, Ad / brand film, Music video, Other**, each with its own colour throughout the app
@@ -59,8 +59,8 @@ This document covers what the app is, what it does, how the team will use it day
 - ✅ Pin important projects to the sidebar
 - ✅ Filter by type and stage; sort by deadline, recent activity or name
 - ✅ Progress bar from finished tasks + approved shots
-- 🔜 Project templates: "Shot batch", "Feature film", "Series IP" that pre-fill typical tasks and milestones
-- 🔜 Archive (hide delivered projects without deleting them)
+- ✅ Starter templates per project type (shot batch, film, IP, ad, music video) that add typical tasks and milestones, spread out to the deadline
+- ✅ Archive (hide finished projects everywhere without deleting them)
 - 🔜 Budget and invoices per project (quote, spent, invoiced, paid)
 
 ### 3.2 Tasks (Kanban board)
@@ -79,18 +79,19 @@ This document covers what the app is, what it does, how the team will use it day
 - ✅ Reference frame image per shot (stored small so it syncs fast)
 - ✅ Filter by status; studio-wide "Shots" page across all projects
 - ✅ **Export shot list to CSV** (opens in Excel, Numbers, Google Sheets)
-- 🔜 Storyboard grid view, shot reordering, import shot list from CSV
+- ✅ **Import a shot list from CSV** (Excel / Sheets); matching shot codes are updated, not duplicated
+- 🔜 Storyboard grid view, shot reordering
 - 🔜 Version history per shot (v1, v2, v3 with their own frames)
 
 ### 3.4 Timeline
 - ✅ Milestones with dates and a done tick, ending with the delivery deadline
-- 🔜 Calendar view (month/week) across all projects
+- ✅ **Calendar**: month view of due tasks, milestones and delivery dates across all projects
 - 🔜 Gantt-style bar view
 
 ### 3.5 Notes and files
 - ✅ Notes per project: briefs, client feedback, scripts, world-building
 - ✅ **Files & links**: store where files actually live (`\\STUDIO-PC\Projects\…`, `/Volumes/…`, drive or review links), with copy and open buttons
-- 🔜 Attach real files (PDFs, images) synced through the studio PC
+- ✅ **Attach files** (briefs, references, frames, scripts, up to 2 GB each). They upload to the studio PC and any device can download them; downloaded copies stay available offline
 - 🔜 Rich text notes (headings, lists)
 
 ### 3.6 People and "My work"
@@ -115,13 +116,15 @@ This document covers what the app is, what it does, how the team will use it day
 - ✅ Studio PC saves a **dated backup every day** (keeps 30 days)
 - ✅ **Download backup** file from any device; **import** merges by newest change
 - ✅ Sample projects never sync to the team server
+- ✅ **Desktop app hosts the studio server** with one switch; no Node.js needed
 - 🔜 Encrypted connection (HTTPS) inside the studio network
 - 🔜 Restore-from-backup screen on the studio PC
 
 ### 3.10 Look and feel
 - ✅ Light and dark mode (follows the system or set manually)
 - ✅ Desktop layout with sidebar; phone layout with bottom tabs
-- ✅ Installable as an app icon on desktop and phone
+- ✅ Installable apps: Windows, Mac, Linux, Android; iPhone via Add to Home Screen
+- ✅ Fonts and icons ship inside the app: it makes no internet requests at all
 
 ---
 
@@ -162,6 +165,7 @@ Every item is a small record with an id, a type, who changed it last and when. T
 | **milestone** | projectId, title, date, done |
 | **note** | projectId, title, body |
 | **link** | projectId, label, target, note |
+| **file** | projectId, name, size, type, content hash on the studio PC, small preview |
 | **member** | name, role, colour |
 
 Every record also has `createdAt`, `updatedAt`, `updatedBy` (device), `editedBy` (person), `deleted`. Deleting leaves a small "deleted" marker so the deletion syncs to every device.
@@ -177,21 +181,25 @@ Every record also has `createdAt`, `updatedAt`, `updatedBy` (device), `editedBy`
 | Offline loading | Service worker + web app manifest | Installs as an app; opens with no network |
 | Studio server | Node.js, **zero dependencies** | Runs on any Windows/Mac PC; nothing to break or update |
 | Server storage | One JSON file + daily backups | Easy to back up, copy and inspect |
-| Native apps (Phase 2) | **Tauri** (Windows/macOS) and **Capacitor** (Android/iOS) wrapping the same app | Real installers / App Store builds, no rewrite |
+| Desktop apps | **Electron** wrapping the same app, with the studio server running inside it | Real installers; Node.js is built in, so the server needs nothing else |
+| Phone apps | **Capacitor** wrapping the same app | Android `.apk` now, iOS later, no rewrite |
+| Builds | GitHub Actions | Windows, Mac, Linux and Android built on GitHub's machines on every push |
 
 ---
 
 ## 7. Phases
 
-### Phase 1: working sample ✅ (this repository)
-Everything marked ✅ above. Runs today: start the studio server on a PC, open it on any device.
+### Phase 1: working sample ✅
+Projects, tasks, shots, timeline, notes, links, team, dashboard, search, offline storage, studio sync server, backups.
 
-### Phase 2: proper installs everywhere
-- Windows `.exe` installer and macOS `.dmg` (Tauri) with the studio server built in. No Node.js install needed.
-- Android `.apk` and iOS app (Capacitor). iOS needs an Apple Developer account for TestFlight / App Store.
-- HTTPS inside the studio network, so phones get full offline install from the studio PC.
-- File attachments synced through the studio PC.
-- Project templates, archive, calendar view, CSV import for shot lists.
+### Phase 2: proper installs everywhere ✅
+- ✅ Windows installer + portable `.exe`, macOS `.dmg`, Linux `.AppImage`/`.deb` (Electron) with the studio server built in
+- ✅ Android `.apk` (Capacitor)
+- ✅ File attachments synced through the studio PC
+- ✅ Project templates, archive, calendar, CSV shot list import
+- ✅ Bundled fonts, zero internet requests
+- 🔜 iPhone app via TestFlight (needs an Apple Developer account)
+- 🔜 Signed installers (removes the Windows/Mac "unknown developer" warning; needs code-signing certificates)
 
 ### Phase 3: studio extras
 - Budgets, quotes and invoices per project
@@ -202,10 +210,11 @@ Everything marked ✅ above. Runs today: start the studio server on a PC, open i
 
 ---
 
-## 8. Known limits of the Phase 1 sample
+## 8. Known limits
 
-- **Phones and full offline install:** browsers only allow offline install from `https://` or `localhost`. In Phase 1 a phone opens the app from the studio PC's address (`http://192.168.x.x:8787`) and keeps all data on the phone. If the studio PC is off, the phone can't *reopen* the app until it's back. Phase 2 (native app / HTTPS) removes this. Laptops opening `http://localhost` on the studio PC itself, or the single-file version, are not affected.
-- Files are stored as links/paths, not uploaded (except small reference frames).
+- **iPhone:** until the native iPhone app exists, iPhones use the web version from the studio PC. Data stays on the phone, but reopening it needs the studio PC to be reachable. Android, Windows, Mac and Linux apps don't have this limit.
+- **Unsigned installers:** Windows and macOS show a one-time warning on first open (see INSTALL.md) until the apps are signed with paid certificates.
+- Attached files are not included in the one-file backup; they live in the studio PC's `files/` folder, which should be copied with the rest of its data folder.
 - If two people edit the same item while both are offline, the later save wins for the whole item.
 - Clock differences between devices can affect which edit is "later". Keep device clocks on automatic time.
 

@@ -1,15 +1,102 @@
 {
   "name": "rmd-studio-desk",
-  "version": "0.1.0",
-  "description": "Offline-first project manager for a film / AI-generation studio. Runs on Windows, macOS, Linux, Android and iOS. No AI, no cloud.",
+  "productName": "Studio Desk",
+  "version": "0.2.0",
+  "description": "Offline project manager for a film and AI-generation studio. Windows, macOS, Linux, Android and iOS. No AI, no cloud.",
+  "author": "RMD",
   "private": true,
   "license": "UNLICENSED",
+  "main": "desktop/main.js",
   "scripts": {
     "start": "node server/server.js",
     "test": "node --test test/merge.test.js test/server.test.js",
-    "build:single": "node scripts/build-single-file.js"
+    "build:single": "node scripts/build-single-file.js",
+    "desktop": "electron .",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "android:prepare": "node scripts/prepare-android.js"
   },
   "engines": {
     "node": ">=18"
-  }
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/filesystem": "^8.1.4",
+    "@capacitor/share": "^8.0.3",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "app.rmd.studiodesk",
+    "productName": "Studio Desk",
+    "artifactName": "StudioDesk-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "desktop/**",
+      "server/**",
+      "app/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "portable": {
+      "artifactName": "StudioDesk-${version}-windows-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "StudioDesk-${version}-windows-setup.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "artifactName": "StudioDesk-${version}-mac.${ext}",
+      "hardenedRuntime": false
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "icon": "build/icon.png",
+      "maintainer": "RMD Studio Desk",
+      "artifactName": "StudioDesk-${version}-linux-${arch}.${ext}",
+      "executableName": "studio-desk",
+      "syncDesktopName": true
+    }
+  },
+  "desktopName": "studio-desk.desktop"
 }

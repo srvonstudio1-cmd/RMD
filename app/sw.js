@@ -1,8 +1,9 @@
 // Offline cache for RMD Studio Desk. The app shell is served from the cache
 // and refreshed in the background; sync calls always go to the network.
-const CACHE = 'studio-desk-0.1.0';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
-const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
+const CACHE = 'studio-desk-0.2.0';
+const FONTS = ['bricolage-grotesque-latin-600', 'bricolage-grotesque-latin-700', 'ibm-plex-sans-latin-400', 'ibm-plex-sans-latin-500',
+  'ibm-plex-sans-latin-600', 'ibm-plex-mono-latin-400', 'ibm-plex-mono-latin-600'].map((f) => `fonts/${f}-normal.woff2`);
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', ...FONTS];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -21,14 +22,13 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.pathname.startsWith('/api/')) return;
-  const sameOrigin = url.origin === self.location.origin;
-  if (!sameOrigin && !FONT_HOSTS.includes(url.hostname)) return;
+  if (url.origin !== self.location.origin) return;
 
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(req, { ignoreSearch: sameOrigin });
+      const cached = await cache.match(req, { ignoreSearch: true });
       const fresh = fetch(req)
-        .then((res) => { if (res && (res.ok || res.type === 'opaque')) cache.put(req, res.clone()); return res; })
+        .then((res) => { if (res && res.ok) cache.put(req, res.clone()); return res; })
         .catch(() => null);
       if (cached) { event.waitUntil(fresh); return cached; }
       const res = await fresh;

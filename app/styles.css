@@ -344,7 +344,13 @@ select.inline { width: auto; padding: 4px 8px; font-size: .85rem; }
 .file-thumb { width: 40px; height: 40px; border-radius: 6px; background: var(--surface-2); display: grid; place-items: center; flex: none; overflow: hidden; color: var(--muted); }
 .file-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .file-thumb svg { width: 18px; height: 18px; }
-.addr { display: flex; align-items: center; gap: 8px; }
+.addr { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.addr .mono { overflow-wrap: anywhere; }
+.qr-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.qr { border-radius: 8px; border: 1px solid var(--line); flex: none; max-width: 100%; height: auto; }
+.qr-row .steps { flex: 1; min-width: 200px; }
+.ts-panel { display: flex; flex-direction: column; gap: 10px; font-weight: 400; color: var(--fg); }
+.ts-panel p { font-size: .9rem; }
 .more-ic { width: 34px; height: 34px; border-radius: 8px; background: var(--surface-2); display: grid; place-items: center; flex: none; }
 .more-ic svg { width: 18px; height: 18px; }
 

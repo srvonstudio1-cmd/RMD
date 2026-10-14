@@ -212,7 +212,7 @@ Projects, tasks, shots, timeline, notes, links, team, dashboard, search, offline
 
 ## 8. Known limits
 
-- **iPhone:** until the native iPhone app exists, iPhones use the web version from the studio PC. Data stays on the phone, but reopening it needs the studio PC to be reachable. Android, Windows, Mac and Linux apps don't have this limit.
+- **iPhone:** iPhones install Studio Desk from Safari (Add to Home Screen). Opened from the studio PC's secure Tailscale address it works fully offline; opened from the plain Wi-Fi address it needs the studio PC reachable to open. An App Store app needs an Apple Developer account.
 - **Unsigned installers:** Windows and macOS show a one-time warning on first open (see INSTALL.md) until the apps are signed with paid certificates.
 - Attached files are not included in the one-file backup; they live in the studio PC's `files/` folder, which should be copied with the rest of its data folder.
 - If two people edit the same item while both are offline, the later save wins for the whole item.

@@ -6,6 +6,7 @@
 const { app, BrowserWindow, protocol, net, ipcMain, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const { pathToFileURL } = require('url');
 const { createStudioServer, lanAddresses } = require('../server/server');
 
@@ -72,6 +73,105 @@ function hostInfo() {
     error: hostError,
   };
 }
+
+// ---------- Tailscale: a secure https:// address for iPhones and remote use ----------
+// Tailscale links the team's devices privately. `tailscale serve` gives the
+// studio server an https://<computer>.<tailnet>.ts.net address with a real
+// certificate, which lets iPhones install Studio Desk as a fully offline app.
+
+function tailscaleCandidates() {
+  if (process.env.STUDIO_TAILSCALE) return [process.env.STUDIO_TAILSCALE];
+  if (process.platform === 'win32') {
+    return [path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe'), 'tailscale'];
+  }
+  if (process.platform === 'darwin') {
+    return ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale', 'tailscale'];
+  }
+  return ['/usr/bin/tailscale', '/usr/local/bin/tailscale', 'tailscale'];
+}
+
+function runTailscale(bin, args, timeout) {
+  return new Promise((resolve) => {
+    execFile(bin, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
+      resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || ''), missing: Boolean(err && err.code === 'ENOENT') });
+    });
+  });
+}
+
+let tailscaleBin = null;
+async function findTailscale() {
+  if (tailscaleBin) return tailscaleBin;
+  for (const c of tailscaleCandidates()) {
+    if (path.isAbsolute(c) && !fs.existsSync(c)) continue;
+    const r = await runTailscale(c, ['version'], 6000);
+    if (r.ok) { tailscaleBin = c; return c; }
+  }
+  return null;
+}
+
+function lastLine(text) {
+  const lines = String(text).trim().split(/\r?\n/).filter(Boolean);
+  return lines.length ? lines[lines.length - 1] : '';
+}
+
+async function tailscaleInfo() {
+  const port = readSettings().port;
+  const bin = await findTailscale();
+  if (!bin) return { installed: false };
+  const st = await runTailscale(bin, ['status', '--json'], 8000);
+  let status = null;
+  try { status = JSON.parse(st.stdout); } catch (err) { /* not running */ }
+  if (!status || status.BackendState !== 'Running') {
+    return { installed: true, running: false, message: 'Tailscale is installed but not connected. Open Tailscale on this computer and sign in.' };
+  }
+  const dnsName = String((status.Self && status.Self.DNSName) || '').replace(/\.$/, '');
+  const ip = ((status.Self && status.Self.TailscaleIPs) || []).find((a) => a.includes('.')) || '';
+  const sv = await runTailscale(bin, ['serve', 'status', '--json'], 8000);
+  let serving = false;
+  try {
+    const web = JSON.stringify(JSON.parse(sv.stdout || '{}').Web || {});
+    serving = web.includes(`127.0.0.1:${port}`) || web.includes(`localhost:${port}`);
+  } catch (err) { /* older Tailscale */ }
+  return {
+    installed: true,
+    running: true,
+    dnsName,
+    ip,
+    serving,
+    httpsUrl: serving && dnsName ? `https://${dnsName}` : '',
+    plainUrl: ip ? `http://${ip}:${port}` : '',
+  };
+}
+
+async function tailscaleEnable() {
+  const bin = await findTailscale();
+  if (!bin) return { installed: false };
+  const port = readSettings().port;
+  const r = await runTailscale(bin, ['serve', '--bg', String(port)], 25000);
+  const out = `${r.stdout}\n${r.stderr}`;
+  const link = out.match(/https:\/\/login\.tailscale\.com\/\S+/);
+  const info = await tailscaleInfo();
+  if (info.serving) return info;
+  if (link) return { ...info, approveUrl: link[0] };
+  if (/access denied|permission|operator/i.test(out)) {
+    return { ...info, error: 'Tailscale needs permission. On Linux run once in a terminal: sudo tailscale set --operator=$USER' };
+  }
+  return { ...info, error: lastLine(r.stderr) || lastLine(r.stdout) || 'Tailscale could not share the server.' };
+}
+
+async function tailscaleDisable() {
+  const bin = await findTailscale();
+  if (bin) await runTailscale(bin, ['serve', '--https=443', 'off'], 15000);
+  return tailscaleInfo();
+}
+
+ipcMain.handle('tailscale:get', () => tailscaleInfo());
+ipcMain.handle('tailscale:enable', () => tailscaleEnable());
+ipcMain.handle('tailscale:disable', () => tailscaleDisable());
+ipcMain.handle('open-external', (_event, url) => {
+  if (/^https:\/\//i.test(String(url))) return shell.openExternal(url);
+  return false;
+});
 
 ipcMain.handle('host:get', () => hostInfo());
 ipcMain.handle('host:set', async (_event, opts = {}) => {

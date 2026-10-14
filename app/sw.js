@@ -1,9 +1,9 @@
 // Offline cache for RMD Studio Desk. The app shell is served from the cache
 // and refreshed in the background; sync calls always go to the network.
-const CACHE = 'studio-desk-0.2.0';
+const CACHE = 'studio-desk-0.3.0';
 const FONTS = ['bricolage-grotesque-latin-600', 'bricolage-grotesque-latin-700', 'ibm-plex-sans-latin-400', 'ibm-plex-sans-latin-500',
   'ibm-plex-sans-latin-600', 'ibm-plex-mono-latin-400', 'ibm-plex-mono-latin-600'].map((f) => `fonts/${f}-normal.woff2`);
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', ...FONTS];
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'vendor/qrcode.js', ...FONTS];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

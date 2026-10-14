@@ -1,7 +1,7 @@
 {
   "name": "rmd-studio-desk",
   "productName": "Studio Desk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Offline project manager for a film and AI-generation studio. Windows, macOS, Linux, Android and iOS. No AI, no cloud.",
   "author": "RMD",
   "private": true,

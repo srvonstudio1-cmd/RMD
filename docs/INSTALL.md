@@ -13,7 +13,7 @@ Open the repository on GitHub → **Releases** → the latest *Studio Desk* rele
 | Mac (Intel and Apple silicon) | `StudioDesk-<version>-mac.dmg` |
 | Android phone / tablet | `StudioDesk-<version>-android.apk` |
 | Linux | `.AppImage` or `.deb` |
-| iPhone / iPad | No file. See step 4. |
+| iPhone / iPad | No file: Apple doesn't allow installing apps from files. See step 4. |
 
 The installers are built automatically by GitHub (the **Actions** tab → *Build apps*). Each finished run also has the files under **Artifacts**.
 
@@ -39,7 +39,16 @@ Install the Windows or Mac app → **Sync & backup** → enter the studio PC's a
 
 **Android:** download the `.apk` on the phone and open it. Allow *Install unknown apps* for your browser or Files app when asked. Then **More → Sync & backup** → enter the studio PC address → **Save and sync now**.
 
-**iPhone / iPad:** in Safari, open the studio PC's address (e.g. `http://192.168.1.20:8787`), then **Share → Add to Home Screen**. Data is saved on the iPhone and works with no signal. Reopening the app from the home screen needs the studio PC to be reachable. A full App Store / TestFlight app needs an Apple Developer account (see below).
+**iPhone / iPad (recommended: full offline app, free):**
+1. On the studio PC, install [Tailscale](https://tailscale.com/download) and sign in.
+2. In Studio Desk on the studio PC: **Sync & backup → Studio server on this computer → Turn on secure iPhone address**. The first time, Tailscale asks you to approve HTTPS once: click **Open Tailscale page → Enable**, then click the button again.
+3. It shows an address like `https://studio-pc.tail1234.ts.net` and a QR code.
+4. On each iPhone: install the **Tailscale** app from the App Store and sign in to the same Tailscale network (or have the studio PC shared with them from the Tailscale admin page).
+5. Scan the QR code with the iPhone camera (or type the address in **Safari**), then tap **Share → Add to Home Screen**.
+
+Studio Desk now has its own icon on the home screen, opens with no signal and no studio PC, and syncs whenever Tailscale is on, in the studio or anywhere else.
+
+**iPhone quick option (studio Wi-Fi only):** open the studio PC's `http://192.168…:8787` address in Safari and add it to the Home Screen. Data stays on the phone, but this version only opens while the studio PC is reachable.
 
 ## 5. First run
 
@@ -55,7 +64,7 @@ The app opens with sample projects so you can look around. When ready: **Sync & 
 
 The studio PC can also run the server with [Node.js](https://nodejs.org) installed: double-click `start-windows.bat` or `start-mac.command` in this repository. Other devices then open the address it prints in a browser.
 
-## iPhone app (later)
+## iPhone App Store / TestFlight app (optional, later)
 
 A native iPhone app is built from the same code with Capacitor. It needs:
 1. An Apple Developer account ($99/year).

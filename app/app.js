@@ -4,11 +4,13 @@
 // configured (server/server.js on the studio PC), changes are exchanged with
 // it over the local network. No AI, no cloud services.
 (function () {
-  const APP_VERSION = '0.2.0';
+  const APP_VERSION = '0.3.0';
   // Where the app is running: the desktop app exposes `studioDesktop`, the
   // phone app (Capacitor) exposes `Capacitor`. Otherwise it is a browser.
   const DESKTOP = window.studioDesktop || null;
   const NATIVE = Boolean(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const STANDALONE = Boolean(navigator.standalone) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
 
   // ---------- vocabularies ----------
   const KINDS = {
@@ -77,6 +79,24 @@
     server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
   };
   const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+
+  // QR code as inline SVG (vendor/qrcode.js). Always dark on white so phone
+  // cameras can read it in either theme.
+  function qrSvg(text, size = 168) {
+    if (typeof window.qrcode !== 'function') return '';
+    try {
+      const qr = window.qrcode(0, 'M');
+      qr.addData(text);
+      qr.make();
+      const n = qr.getModuleCount();
+      const m = 2;
+      let d = '';
+      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c + m} ${r + m}h1v1h-1z`;
+      return `<svg class="qr" width="${size}" height="${size}" viewBox="0 0 ${n + m * 2} ${n + m * 2}" role="img" aria-label="QR code for ${esc(text)}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#ffffff"/><path d="${d}" fill="#000000"/></svg>`;
+    } catch (err) {
+      return '';
+    }
+  }
 
   // ---------- small helpers ----------
   const $ = (sel) => document.querySelector(sel);
@@ -389,13 +409,48 @@
     el.innerHTML = `
       <div class="status-line"><i class="sync-dot ${info.running ? 'ok' : info.error ? 'err' : ''}"></i>
         <span>${info.running ? 'Running on this computer.' : info.error ? esc(info.error) : 'Off. This computer only syncs with another studio PC.'}</span></div>
-      ${info.running ? `<div class="field"><span>Other devices connect to</span>${addrs.length ? addrs.map((a) => `<div class="addr"><span class="mono">${esc(a)}</span><button class="icon-btn" data-action="copy" data-text="${esc(a)}" aria-label="Copy address">${icon('copy')}</button></div>`).join('') : '<span class="muted">No Wi-Fi or network connection found.</span>'}</div>` : ''}
+      ${info.running ? `<div class="field"><span>On the studio Wi-Fi, other devices connect to</span>${addrs.length ? addrs.map((a) => `<div class="addr"><span class="mono">${esc(a)}</span><button class="icon-btn" data-action="copy" data-text="${esc(a)}" aria-label="Copy address">${icon('copy')}</button></div>`).join('') : '<span class="muted">No Wi-Fi or network connection found.</span>'}
+        ${addrs.length ? `<div class="qr-row">${qrSvg(addrs[0])}<span class="hint">Scan with a phone camera to open it.</span></div>` : ''}</div>
+        <div class="field"><span>iPhones, and phones away from the studio</span><div id="ts-panel" class="ts-panel"><span class="muted">Checking Tailscale…</span></div></div>` : ''}
       <label class="field"><span>Team key for the server</span><input id="host-key" type="password" autocomplete="off" placeholder="Optional. Everyone enters the same key." value="${esc(info.key || '')}"></label>
       <div class="actions">${info.running
         ? '<button class="btn" data-action="host-apply" data-on="1">Save key</button><button class="btn danger" data-action="host-apply" data-on="0">Stop hosting</button>'
         : `<button class="btn primary" data-action="host-apply" data-on="1">${icon('server')}Host the studio server here</button>`}
         <button class="btn ghost" data-action="host-open">Open data folder</button></div>
       <p class="muted" style="font-size:.85rem">Data folder: <span class="mono">${esc(info.dataDir || '')}</span>. It holds every project, uploaded file and the daily backups. Keep this app open (it can sit minimised) while the team works.</p>`;
+    if (info.running) renderTailscalePanel();
+  }
+
+  async function renderTailscalePanel(result) {
+    const el = $('#ts-panel');
+    if (!el || !DESKTOP.getTailscale) return;
+    let ts = result;
+    if (!ts) {
+      try { ts = await DESKTOP.getTailscale(); } catch (err) { el.textContent = 'Could not check Tailscale.'; return; }
+    }
+    if (!ts.installed) {
+      el.innerHTML = `<p class="muted">Install <b>Tailscale</b> (free) on this computer and sign in. It gives the studio server a secure address that iPhones can install as an offline app, and lets phones sync from anywhere.</p>
+        <div class="actions"><button class="btn" data-action="open-link" data-url="https://tailscale.com/download">Get Tailscale</button><button class="btn ghost" data-action="ts-check">Check again</button></div>`;
+      return;
+    }
+    if (!ts.running) {
+      el.innerHTML = `<p class="muted">${esc(ts.message)}</p><div class="actions"><button class="btn ghost" data-action="ts-check">Check again</button></div>`;
+      return;
+    }
+    if (ts.httpsUrl) {
+      el.innerHTML = `<div class="addr"><span class="mono">${esc(ts.httpsUrl)}</span><button class="icon-btn" data-action="copy" data-text="${esc(ts.httpsUrl)}" aria-label="Copy address">${icon('copy')}</button></div>
+        <div class="qr-row">${qrSvg(ts.httpsUrl)}<ol class="steps"><li>On the iPhone, install the <b>Tailscale</b> app and sign in to the same Tailscale network.</li>
+          <li>Scan this code, or open the address in <b>Safari</b>.</li><li>Tap <b>Share → Add to Home Screen</b>.</li>
+          <li>Done. It opens offline anywhere and syncs whenever Tailscale is on.</li></ol></div>
+        <p class="hint">Android phones and laptops can use this address too, to sync from outside the studio.</p>
+        <div class="actions"><button class="btn ghost" data-action="ts-disable">Turn off secure address</button></div>`;
+      return;
+    }
+    el.innerHTML = `${ts.approveUrl ? `<p><b>One more step:</b> Tailscale asks you to allow secure addresses for your network, once. Open the page, click <b>Enable</b>, then come back and click the button again.</p>
+        <div class="actions"><button class="btn" data-action="open-link" data-url="${esc(ts.approveUrl)}">Open Tailscale page</button></div>` : ''}
+      ${ts.error ? `<p class="due over">${esc(ts.error)}</p>` : ''}
+      <p class="muted">Tailscale is connected${ts.dnsName ? ` as <span class="mono">${esc(ts.dnsName)}</span>` : ''}. Turn on the secure address so iPhones can install Studio Desk as an offline app.</p>
+      <div class="actions"><button class="btn primary" data-action="ts-enable">Turn on secure iPhone address</button></div>`;
   }
 
   async function applyHosting(enabled) {
@@ -421,6 +476,18 @@
 
   // ---------- views ----------
   const VIEWS = {};
+
+  // On iPhone Safari: explain how to install, and whether this address can work offline.
+  function iosBanner() {
+    if (!IOS || NATIVE || DESKTOP || Store.meta.iosTipDismissed) return '';
+    if (!window.isSecureContext) {
+      return `<div class="sample-note"><span><b>On iPhone, use the secure address.</b> This http:// address only opens while the studio PC is reachable. Ask for the <span class="mono">https://</span> address shown on the studio PC under Sync &amp; backup, then add that one to your Home Screen to get an app that opens anywhere, offline.</span>
+        <button class="btn sm" data-action="ios-dismiss">Got it</button></div>`;
+    }
+    if (STANDALONE) return '';
+    return `<div class="sample-note"><span><b>Install on this iPhone:</b> tap the Share button in Safari, then <b>Add to Home Screen</b>. Studio Desk then opens like an app and works offline.</span>
+      <button class="btn sm" data-action="ios-dismiss">Done</button></div>`;
+  }
 
   function sampleBanner() {
     if (!Store.meta.sample) return '';
@@ -473,6 +540,7 @@
 
     const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
     return `
+      ${iosBanner()}
       ${sampleBanner()}
       <div class="page-head"><div><div class="eyebrow">${esc(today)}</div><h1>Studio overview</h1>
         <p class="lede">${plural(active.length, 'active project')}, ${plural(weekDue.length, 'task')} due within a week.</p></div></div>
@@ -1620,6 +1688,18 @@
     'clear-downloads': () => clearDownloads(),
     'host-apply': (el) => applyHosting(el.dataset.on === '1'),
     'host-open': () => DESKTOP && DESKTOP.openDataFolder(),
+    'open-link': (el) => {
+      if (DESKTOP && DESKTOP.openExternal) DESKTOP.openExternal(el.dataset.url);
+      else window.open(el.dataset.url, '_blank', 'noopener');
+    },
+    'ts-check': () => renderTailscalePanel(),
+    'ts-enable': async (el) => {
+      el.disabled = true;
+      el.textContent = 'Setting up… (up to 25 seconds)';
+      renderTailscalePanel(await DESKTOP.enableTailscale());
+    },
+    'ts-disable': async () => renderTailscalePanel(await DESKTOP.disableTailscale()),
+    'ios-dismiss': () => { Store.setMeta('iosTipDismissed', true); render(); },
     'toggle-pin': (el) => { const p = get(el.dataset.id); save('project', { id: p.id, pinned: !p.pinned }); toast(p.pinned ? 'Unpinned' : 'Pinned to sidebar'); },
     take: (el) => { const s = get(el.dataset.id); save('shot', { id: s.id, takes: Math.max(0, (Number(s.takes) || 0) + Number(el.dataset.d)) }); },
     copy: (el) => {

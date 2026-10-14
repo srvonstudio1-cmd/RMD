@@ -7,4 +7,8 @@ contextBridge.exposeInMainWorld('studioDesktop', {
   getHostInfo: () => ipcRenderer.invoke('host:get'),
   setHosting: (opts) => ipcRenderer.invoke('host:set', opts),
   openDataFolder: () => ipcRenderer.invoke('host:open-folder'),
+  getTailscale: () => ipcRenderer.invoke('tailscale:get'),
+  enableTailscale: () => ipcRenderer.invoke('tailscale:enable'),
+  disableTailscale: () => ipcRenderer.invoke('tailscale:disable'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
 });

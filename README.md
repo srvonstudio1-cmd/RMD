@@ -16,7 +16,7 @@ Offline project manager for a film and AI-generation studio. Shot batches, films
 | macOS | Universal `.dmg` (Intel + Apple silicon) | GitHub Actions (`macos-latest`) |
 | Linux | `.AppImage` and `.deb` | GitHub Actions (`ubuntu-latest`) |
 | Android | `.apk` | GitHub Actions (Capacitor + Gradle) |
-| iPhone / iPad | Add to Home Screen from the studio PC; native app needs an Apple Developer account | |
+| iPhone / iPad | Home Screen app from the studio PC's secure Tailscale address: works offline (see INSTALL.md). App Store version needs an Apple Developer account | |
 | Any browser | Open the studio PC's address | |
 
 Every push builds all of them (**Actions → Build apps**; downloads under *Artifacts*). Run the workflow by hand with **Publish as a release** ticked to put them on the Releases page.
